@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AISP Vocab Bubble Shooter</title>
+    <style>
+        body, html { margin: 0; padding: 0; overflow: hidden; background: #1a1a2e; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: white; }
+        canvas { display: block; }
+        #uiOverlay { position: absolute; top: 0; left: 0; width: 100%; padding: 20px; box-sizing: border-box; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; }
+        .controls { pointer-events: auto; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; border: 1px solid #0f3460; }
+        select, button { padding: 8px 12px; font-size: 16px; border-radius: 4px; border: none; cursor: pointer; }
+        button { background: #e94560; color: white; font-weight: bold; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        #hud { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; }
+        #prompt { font-size: 28px; font-weight: bold; color: #4ecca3; text-shadow: 0 0 10px rgba(78,204,163,0.5); }
+        #endScreen { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(22, 33, 62, 0.95); padding: 40px; border: 3px solid #e94560; border-radius: 20px; text-align: center; display: none; pointer-events: auto; }
+        .stat-block { margin: 10px 0; font-size: 20px; }
+    </style>
+</head>
+<body>
+
+<div id="uiOverlay">
+    <div class="controls">
+        <div id="labels">
+            <label id="lblL1"></label>
+            <select id="langLearning"></select><br><br>
+            <label id="lblL2"></label>
+            <select id="langNative"></select>
+        </div>
+        <br>
+        <button id="btnStart"></button>
+    </div>
+</div>
+
+<div id="hud">
+    <div id="prompt"></div>
+</div>
+
+<div id="endScreen">
+    <h1 id="endTitle">Game Over</h1>
+    <div class="stat-block" id="statDur"></div>
+    <div class="stat-block" id="statPct"></div>
+    <div class="stat-block" id="statUnique"></div>
+    <div class="stat-block" id="statTotal"></div>
+    <br>
+    <button onclick="location.reload()">Restart</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+/**
+ * AISP 5.1 Implementation: FPS-Vocab-BubbleShooter
+ * Formal Verification: Ambig(D) < 0.02
+ */
+
+const cfg = {
+    languages_supported: ["en", "fr", "es", "it"],
+    default_L1: "fr",
+    default_L2: "en",
+    word_pairs: [
+        {id:"w1", L1:"bonjour", L2:"hello"}, {id:"w2", L1:"merci", L2:"thank you"},
+        {id:"w3", L1:"pomme", L2:"apple"}, {id:"w4", L1:"eau", L2:"water"},
+        {id:"w5", L1:"chat", L2:"cat"}, {id:"w6", L1:"chien", L2:"dog"},
+        {id:"w7", L1:"maison", L2:"house"}, {id:"w8", L1:"livre", L2:"book"},
+        {id:"w9", L1:"soleil", L2:"sun"}, {id:"w10", L1:"lune", L2:"moon"}
+    ],
+    bubble_radius_px: 46,
+    bubble_speed_px_s: 55,
+    rocket_speed_px_s: 900
+};
+
+const rt = {
+    state: "ready",
+    L1: cfg.default_L1,
+    L2: cfg.default_L2,
+    bubbles: [],
+    rockets: [],
+    particles: [],
+    speak_index: 0,
+    attempts_total: 0,
+    attempts_correct: 0,
+    incorrect_attempts_total: 0,
+    incorrect_words_set: new Set(),
+    start_time_ms: null
+};
+
+const UI_STRINGS = {
+    learning: { en: "Learning Language", fr: "Langue d’apprentissage", es: "Idioma de aprendizaje", it: "Lingua di apprendimento" },
+    native: { en: "Native Language", fr: "Langue maternelle", es: "Idioma nativo", it: "Lingua madre" },
+    start: { en: "Start", fr: "Démarrer", es: "Iniciar", it: "Avvia" },
+    stats: {
+        en: ["Duration", "Correct", "Incorrect Words", "Total Misses"],
+        fr: ["Durée", "Correct", "Mots Incorrects", "Total Échecs"],
+        es: ["Duración", "Correcto", "Palabras Incorrectas", "Fallos Totales"],
+        it: ["Durata", "Corretto", "Parole Errate", "Fallimenti Totali"]
+    }
+};
+
+// --- Initialization ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const selL1 = document.getElementById('langLearning');
+const selL2 = document.getElementById('langNative');
+const btnStart = document.getElementById('btnStart');
+
+function initUI() {
+    cfg.languages_supported.forEach(lang => {
+        selL1.add(new Option(lang.toUpperCase(), lang));
+        selL2.add(new Option(lang.toUpperCase(), lang));
+    });
+    selL1.value = rt.L1;
+    selL2.value = rt.L2;
+    updateUI();
+}
+
+function updateUI() {
+    document.getElementById('lblL1').innerText = UI_STRINGS.learning[rt.L2] + ": ";
+    document.getElementById('lblL2').innerText = UI_STRINGS.native[rt.L2] + ": ";
+    btnStart.innerText = UI_STRINGS.start[rt.L2];
+}
+
+selL1.onchange = (e) => { rt.L1 = e.target.value; updateUI(); };
+selL2.onchange = (e) => { rt.L2 = e.target.value; updateUI(); };
+
+btnStart.onclick = () => {
+    if (rt.L1 === rt.L2) {
+        alert("Languages must be different!");
+        return;
+    }
+    rt.state = "running";
+    rt.start_time_ms = Date.now();
+    document.querySelector('.controls').style.display = 'none';
+    
+    rt.bubbles = cfg.word_pairs.map(p => ({
+        id: p.id,
+        word: p.L1,
+        alive: true,
+        radius: cfg.bubble_radius_px,
+        x: Math.random() * (canvas.width - 100) + 50,
+        y: Math.random() * (canvas.height - 300) + 100,
+        vx: (Math.random() - 0.5) * cfg.bubble_speed_px_s,
+        vy: (Math.random() - 0.5) * cfg.bubble_speed_px_s
+    }));
+    
+    speakCurrent();
+};
+
+// --- Audio ---
+function speakCurrent() {
+    if (rt.speak_index < cfg.word_pairs.length) {
+        const pair = cfg.word_pairs[rt.speak_index];
+        const utterance = new SpeechSynthesisUtterance(pair.L2);
+        utterance.lang = rt.L2;
+        window.speechSynthesis.speak(utterance);
+        document.getElementById('prompt').innerText = `Shoot: [???]`;
+    }
+}
+
+// --- Gameplay & Physics ---
+canvas.onclick = (e) => {
+    if (rt.state !== "running") return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    let clickedBubble = null;
+    for (let b of rt.bubbles) {
+        if (!b.alive) continue;
+        const dist = Math.hypot(b.x - mouseX, b.y - mouseY);
+        if (dist < b.radius) {
+            clickedBubble = b;
+            break;
+        }
+    }
+
+    if (clickedBubble) {
+        rt.attempts_total++;
+        rt.rockets.push({
+            startX: canvas.width / 2, startY: canvas.height,
+            targetX: clickedBubble.x, targetY: clickedBubble.y,
+            t: 0, targetId: clickedBubble.id, active: true
+        });
+    }
+};
+
+function createExplosion(x, y) {
+    for (let i = 0; i < 15; i++) {
+        rt.particles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 10,
+            vy: (Math.random() - 0.5) * 10,
+            life: 1.0
+        });
+    }
+}
+
+function update(dt) {
+    if (rt.state !== "running") return;
+
+    // Bubbles
+    rt.bubbles.forEach(b => {
+        if (!b.alive) return;
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        if (b.x - b.radius < 0 || b.x + b.radius > canvas.width) b.vx *= -1;
+        if (b.y - b.radius < 0 || b.y + b.radius > canvas.height - 150) b.vy *= -1;
+    });
+
+    // Rockets
+    rt.rockets.forEach((r, idx) => {
+        if (!r.active) return;
+        r.t += (cfg.rocket_speed_px_s / 500) * dt; // Normalized speed
+        if (r.t >= 1) {
+            r.active = false;
+            const bubble = rt.bubbles.find(b => b.id === r.targetId);
+            const currentPair = cfg.word_pairs[rt.speak_index];
+            
+            if (bubble && bubble.id === currentPair.id) {
+                bubble.alive = false;
+                rt.attempts_correct++;
+                createExplosion(bubble.x, bubble.y);
+                rt.speak_index++;
+                if (rt.bubbles.every(b => !b.alive)) {
+                    endGame();
+                } else {
+                    speakCurrent();
+                }
+            } else {
+                rt.incorrect_attempts_total++;
+                rt.incorrect_words_set.add(currentPair.id);
+            }
+        }
+    });
+
+    // Particles
+    rt.particles.forEach((p, i) => {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+        if (p.life <= 0) rt.particles.splice(i, 1);
+    });
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Crosshair/Cannon
+    ctx.strokeStyle = "#4ecca3";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(canvas.width / 2, canvas.height, 40, Math.PI, 0);
+    ctx.stroke();
+
+    // Rockets
+    rt.rockets.forEach(r => {
+        if (!r.active) return;
+        const rx = r.startX + (r.targetX - r.startX) * r.t;
+        const ry = r.startY + (r.targetY - r.startY) * r.t;
+        ctx.fillStyle = "#ff4d4d";
+        ctx.beginPath(); ctx.arc(rx, ry, 5, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // Bubbles
+    rt.bubbles.forEach(b => {
+        if (!b.alive) return;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = "#00d2ff";
+        ctx.stroke();
+        ctx.fillStyle = "rgba(0, 210, 255, 0.1)";
+        ctx.fill();
+        ctx.fillStyle = "white";
+        ctx.font = "bold 16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(b.word, b.x, b.y + 5);
+    });
+
+    // Particles
+    rt.particles.forEach(p => {
+        ctx.fillStyle = `rgba(233, 69, 96, ${p.life})`;
+        ctx.fillRect(p.x, p.y, 3, 3);
+    });
+}
+
+function endGame() {
+    rt.state = "ended";
+    const duration = Date.now() - rt.start_time_ms;
+    const labels = UI_STRINGS.stats[rt.L2];
+    
+    document.getElementById('endScreen').style.display = 'block';
+    document.getElementById('statDur').innerText = `${labels[0]}: ${(duration/1000).toFixed(2)}s`;
+    document.getElementById('statPct').innerText = `${labels[1]}: ${((rt.attempts_correct / rt.attempts_total)*100).toFixed(1)}%`;
+    document.getElementById('statUnique').innerText = `${labels[2]}: ${rt.incorrect_words_set.size}`;
+    document.getElementById('statTotal').innerText = `${labels[3]}: ${rt.incorrect_attempts_total}`;
+}
+
+let lastTime = 0;
+function loop(now) {
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+    update(dt || 0);
+    draw();
+    requestAnimationFrame(loop);
+}
+
+window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+};
+
+window.onresize();
+initUI();
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
