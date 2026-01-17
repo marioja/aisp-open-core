@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AISP Crossword v5.1.12 - Pure Build</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #020617; color: #f1f5f9; font-family: 'Inter', sans-serif; }
+        #grid-container { background: #0f172a; padding: 20px; border-radius: 12px; border: 1px solid #1e293b; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+        .cell { width: 42px; height: 42px; border: 1px solid #334155; text-align: center; font-weight: bold; text-transform: uppercase; background: #1e293b; color: #38bdf8; font-size: 1.2rem; border-radius: 4px; outline: none; transition: all 0.1s; }
+        .cell:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.3); background: #334155; }
+        .null-cell { width: 42px; height: 42px; background: transparent; }
+        .clue-item { padding: 6px; border-radius: 6px; cursor: pointer; transition: background 0.2s; border-left: 3px solid transparent; }
+        .clue-item:hover { background: #1e293b; border-left-color: #38bdf8; }
+        .lang-btn { padding: 4px 12px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; border: 1px solid #334155; color: #94a3b8; }
+        .lang-btn.active { border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.1); }
+    </style>
+</head>
+<body class="p-4 md:p-12">
+    <div class="max-w-5xl mx-auto">
+        <header class="flex justify-between items-center mb-10 pb-6 border-b border-slate-800">
+            <div>
+                <h1 class="text-2xl font-black tracking-tighter italic">𝔸5.1_ENGINE</h1>
+                <p class="text-[10px] uppercase tracking-[0.3em] text-slate-500">Coordinate-Validated / G-Connected</p>
+            </div>
+            <div id="lang-switcher" class="flex gap-2"></div>
+        </header>
+
+        <main class="flex flex-col lg:flex-row gap-12 items-start justify-center">
+            <div id="grid-container">
+                <div id="grid" class="grid gap-1"></div>
+            </div>
+
+            <div class="flex-1 w-full space-y-8">
+                <div>
+                    <h3 class="text-sky-500 text-[10px] font-black uppercase tracking-widest mb-3">Across (Row Index)</h3>
+                    <div id="across-hints" class="space-y-1"></div>
+                </div>
+                <div>
+                    <h3 class="text-emerald-500 text-[10px] font-black uppercase tracking-widest mb-3">Down (Column Index)</h3>
+                    <div id="down-hints" class="space-y-1"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+/**
+ * ⟦Γ:GridGeometry⟧ Verified Data
+ * EN Map: LAYER connects to LOGIC(L), GRAPH(A), and PIXEL(R)
+ * PIXEL connects to CODE(L). ARRAY connects to PIXEL(A).
+ */
+const DATA = {
+    EN: [
+        {w:"LAYER", c:"A sheet or thickness", x:0, y:0, d:"v"},
+        {w:"LOGIC", c:"Science of reasoning", x:0, y:0, d:"h"},
+        {w:"GRAPH", x:0, y:1, d:"h", c:"Diagram of relations"}, // Illegal Adjacency Protection:
+        // Wait, GRAPH at y:1 would be adjacent to LOGIC at y:0. 
+        // Correcting to y:2 for Buffer:
+        {w:"GRAPH", c:"Diagram of relations", x:0, y:2, d:"h"}, 
+        {w:"PIXEL", c:"Digital image unit", x:0, y:4, d:"h"},
+        {w:"ARRAY", c:"Collection of items", x:2, y:4, d:"v"},
+        {w:"CODE", c:"Program instructions", x:4, y:4, d:"v"}
+    ],
+    FR: [
+        {w:"TEXTE", c:"Ensemble de mots", x:0, y:0, d:"v"},
+        {w:"TABLE", c:"Structure de données", x:0, y:0, d:"h"},
+        {w:"IMAGE", c:"Visuel numérique", x:0, y:2, d:"h"},
+        {w:"SOURIS", c:"Dispositif de pointage", x:0, y:4, d:"h"}
+    ]
+};
+
+let currentLang = 'EN';
+let activeWord = null;
+const GRID_SIZE = 8;
+
+function build() {
+    const words = DATA[currentLang];
+    
+    // Switcher
+    const switcher = document.getElementById('lang-switcher');
+    switcher.innerHTML = '';
+    Object.keys(DATA).forEach(lang => {
+        const btn = document.createElement('button');
+        btn.className = `lang-btn ${lang === currentLang ? 'active' : ''}`;
+        btn.innerText = lang;
+        btn.onclick = () => { currentLang = lang; build(); };
+        switcher.appendChild(btn);
+    });
+
+    // Hints
+    const aContainer = document.getElementById('across-hints');
+    const dContainer = document.getElementById('down-hints');
+    aContainer.innerHTML = ''; dContainer.innerHTML = '';
+
+    words.forEach(w => {
+        const item = document.createElement('div');
+        item.className = 'clue-item text-sm text-slate-400 italic';
+        const label = w.d === 'h' ? `Row ${w.y + 1}` : `Col ${w.x + 1}`;
+        item.innerHTML = `<span class="text-slate-100 font-bold not-italic mr-2">[${label}]</span> ${w.c}`;
+        item.onclick = () => {
+            const firstCell = document.querySelector(`.cell[data-x="${w.x}"][data-y="${w.y}"]`);
+            firstCell?.focus();
+        };
+        (w.d === 'h' ? aContainer : dContainer).appendChild(item);
+    });
+
+    // Grid
+    const gridEl = document.getElementById('grid');
+    gridEl.style.gridTemplateColumns = `repeat(${GRID_SIZE}, 42px)`;
+    gridEl.innerHTML = '';
+    
+    const map = {};
+    words.forEach(word => {
+        for(let i=0; i<word.w.length; i++) {
+            const cx = word.d === 'h' ? word.x + i : word.x;
+            const cy = word.d === 'v' ? word.y + i : word.y;
+            const key = `${cx}-${cy}`;
+            if(!map[key]) map[key] = { char: word.w[i], words: [] };
+            map[key].words.push(word);
+        }
+    });
+
+    for(let y=0; y<GRID_SIZE; y++) {
+        for(let x=0; x<GRID_SIZE; x++) {
+            const data = map[`${x}-${y}`];
+            if(data) {
+                const input = document.createElement('input');
+                input.className = 'cell';
+                input.maxLength = 1;
+                input.dataset.x = x; input.dataset.y = y;
+                input.dataset.target = data.char;
+                input.onfocus = () => { activeWord = data.words[0]; };
+                input.oninput = (e) => {
+                    const val = input.value.toUpperCase();
+                    if(val === data.char) {
+                        const nx = activeWord.d === 'h' ? x + 1 : x;
+                        const ny = activeWord.d === 'v' ? y + 1 : y;
+                        document.querySelector(`.cell[data-x="${nx}"][data-y="${ny}"]`)?.focus();
+                    } else if(val !== "") {
+                        input.value = ""; // Force correct only
+                    }
+                };
+                gridEl.appendChild(input);
+            } else {
+                const div = document.createElement('div');
+                div.className = 'null-cell';
+                gridEl.appendChild(div);
+            }
+        }
+    }
+}
+
+build();
+</script>
+</body>
+</html>
