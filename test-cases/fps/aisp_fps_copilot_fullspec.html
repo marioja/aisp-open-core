@@ -1,0 +1,938 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>FPS Vocab Bubble Shooter (Offline)</title>
+  <style>
+    :root{
+      --bg:#0b1020;
+      --panel:rgba(10,14,28,.72);
+      --panel2:rgba(10,14,28,.85);
+      --text:#e8eeff;
+      --muted:#a9b6df;
+      --accent:#7aa2ff;
+      --good:#46e39a;
+      --bad:#ff5f6d;
+      --warn:#ffd166;
+      --bubble:rgba(122,162,255,.18);
+      --bubbleStroke:rgba(122,162,255,.55);
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;}
+    #wrap{position:fixed;inset:0;overflow:hidden;}
+    canvas{position:absolute;inset:0;display:block;}
+    #uiOverlay{
+      position:absolute;left:12px;top:12px;right:12px;
+      display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;
+      padding:10px 12px;border:1px solid rgba(255,255,255,.08);
+      background:var(--panel);backdrop-filter: blur(10px);
+      border-radius:12px;
+      user-select:none;
+    }
+    .grp{display:flex;flex-direction:column;gap:6px;min-width:220px;}
+    label{font-size:12px;color:var(--muted);}
+    select,button{
+      height:40px;border-radius:10px;border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.06);color:var(--text);padding:0 12px;
+      outline:none;
+    }
+    select:focus,button:focus{border-color:rgba(122,162,255,.6);box-shadow:0 0 0 3px rgba(122,162,255,.18);}
+    button{
+      cursor:pointer;background:linear-gradient(180deg, rgba(122,162,255,.22), rgba(122,162,255,.10));
+      border-color:rgba(122,162,255,.45);
+    }
+    button:disabled{cursor:not-allowed;opacity:.55;}
+    #hud{
+      position:absolute;left:12px;bottom:12px;
+      padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);
+      background:var(--panel2);min-width:280px;max-width:520px;
+    }
+    #hud .row{display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;justify-content:space-between;}
+    #hud .prompt{font-size:14px;color:var(--muted);}
+    #hud .prompt strong{color:var(--text);font-weight:650;}
+    #hud .mini{font-size:12px;color:var(--muted);}
+    #endScreen{
+      position:absolute;inset:0;display:none;place-items:center;
+      background:rgba(0,0,0,.55);
+    }
+    #endCard{
+      width:min(680px, calc(100% - 24px));
+      border-radius:16px;border:1px solid rgba(255,255,255,.10);
+      background:rgba(10,14,28,.92);
+      padding:18px 18px 16px;
+      box-shadow:0 24px 80px rgba(0,0,0,.55);
+    }
+    #endCard h2{margin:0 0 12px 0;font-size:18px;}
+    .stats2d{
+      display:grid;grid-template-columns:1fr 1fr;gap:10px;
+    }
+    .stat{
+      padding:10px 12px;border-radius:12px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.05);
+    }
+    .stat .k{font-size:12px;color:var(--muted);margin-bottom:4px;}
+    .stat .v{font-size:16px;font-weight:700;}
+    .actions{margin-top:14px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;}
+    .pill{
+      display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;
+      border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.05);
+      color:var(--muted);font-size:12px;
+    }
+    .pill b{color:var(--text);font-weight:650;}
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="uiOverlay" aria-label="UI">
+    <div class="grp">
+      <label id="lblLearning" for="langLearning">Learning language</label>
+      <select id="langLearning" aria-label="Learning language selector"></select>
+    </div>
+
+    <div class="grp">
+      <label id="lblNative" for="langNative">Native language</label>
+      <select id="langNative" aria-label="Native language selector"></select>
+    </div>
+
+    <div class="grp" style="min-width:140px;">
+      <label>&nbsp;</label>
+      <button id="btnStart" type="button">Start</button>
+    </div>
+
+    <span class="pill" id="statusPill"><b>State</b> <span id="stateText">ready</span></span>
+    <span class="pill" id="audioPill"><b>Audio</b> <span id="audioText">unknown</span></span>
+  </div>
+
+  <div id="hud" aria-label="HUD">
+    <div class="row">
+      <div class="prompt" id="promptLine">Press <strong>Start</strong> to begin.</div>
+      <div class="mini" id="progressLine">0 / 0</div>
+    </div>
+  </div>
+
+  <div id="endScreen" role="dialog" aria-modal="true" aria-label="End screen">
+    <div id="endCard">
+      <h2 id="endTitle">Results</h2>
+      <div class="stats2d" id="statsGrid"></div>
+      <div class="actions">
+        <button id="btnRestart" type="button">Restart</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ----- Config (single page, offline, dependency-free) -----
+  const LANGS = ["en","fr","es","it"];
+
+  // UI strings keyed by UI language = native language (L2)
+  const UI = {
+    learningLabel: { en:"Learning language", fr:"Langue d’apprentissage", es:"Idioma de aprendizaje", it:"Lingua di apprendimento" },
+    nativeLabel:   { en:"Native language",   fr:"Langue maternelle",      es:"Idioma nativo",       it:"Lingua madre" },
+    start:         { en:"Start",             fr:"Démarrer",               es:"Iniciar",             it:"Avvia" },
+    restart:       { en:"Restart",           fr:"Recommencer",            es:"Reiniciar",           it:"Riavvia" },
+    results:       { en:"Results",           fr:"Résultats",              es:"Resultados",          it:"Risultati" },
+    pressStart:    { en:"Press Start to begin.", fr:"Appuyez sur Démarrer pour commencer.", es:"Pulsa Iniciar para comenzar.", it:"Premi Avvia per iniziare." },
+    promptHeard:   { en:"Heard",             fr:"Entendu",                es:"Escuchado",           it:"Ascoltato" },
+    clickMatch:    { en:"Click the matching bubble.", fr:"Cliquez sur la bulle correspondante.", es:"Haz clic en la burbuja correcta.", it:"Clicca la bolla corretta." },
+    duration:      { en:"Duration",          fr:"Durée",                  es:"Duración",            it:"Durata" },
+    correctPct:    { en:"Correct percentage",fr:"Pourcentage correct",    es:"Porcentaje correcto", it:"Percentuale corretta" },
+    incorrectWords:{ en:"Incorrect words",   fr:"Mots incorrects",        es:"Palabras incorrectas",it:"Parole errate" },
+    incorrectAtt:  { en:"Incorrect attempts",fr:"Tentatives incorrectes", es:"Intentos incorrectos",it:"Tentativi errati" },
+    audioOk:       { en:"speech",            fr:"voix",                   es:"voz",                 it:"voce" },
+    audioOff:      { en:"text-only",         fr:"texte",                  es:"solo texto",          it:"solo testo" },
+  };
+
+  // Canonical concepts wordset (concept id), with per-language strings.
+  // Extend freely: add more concepts for more bubbles.
+  const CONCEPTS = [
+    { id:"hello",   t:{ en:"hello",   fr:"bonjour",  es:"hola",      it:"ciao" } },
+    { id:"thanks",  t:{ en:"thank you", fr:"merci",  es:"gracias",   it:"grazie" } },
+    { id:"apple",   t:{ en:"apple",   fr:"pomme",    es:"manzana",   it:"mela" } },
+    { id:"water",   t:{ en:"water",   fr:"eau",      es:"agua",      it:"acqua" } },
+    { id:"cat",     t:{ en:"cat",     fr:"chat",     es:"gato",      it:"gatto" } },
+    { id:"dog",     t:{ en:"dog",     fr:"chien",    es:"perro",     it:"cane" } },
+    { id:"house",   t:{ en:"house",   fr:"maison",   es:"casa",      it:"casa" } },
+    { id:"book",    t:{ en:"book",    fr:"livre",    es:"libro",     it:"libro" } },
+    { id:"sun",     t:{ en:"sun",     fr:"soleil",   es:"sol",       it:"sole" } },
+    { id:"moon",    t:{ en:"moon",    fr:"lune",     es:"luna",      it:"luna" } },
+  ];
+
+  // Defaults: must be different
+  const DEFAULT_L1 = "fr"; // learning
+  const DEFAULT_L2 = "en"; // native (UI + spoken)
+  if (DEFAULT_L1 === DEFAULT_L2) throw new Error("Defaults must differ.");
+
+  // Physics / rendering
+  const cfg = {
+    bubbleRadius: 46,
+    bubbleSpeed:  55,   // px/s baseline
+    rocketSpeed:  900,  // px/s
+    bouncePadding: 6,
+    maxRockets: 4,
+    crosshair: true,
+  };
+
+  // ----- DOM -----
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d", { alpha:false });
+
+  const selL1 = document.getElementById("langLearning");
+  const selL2 = document.getElementById("langNative");
+  const lblL1 = document.getElementById("lblLearning");
+  const lblL2 = document.getElementById("lblNative");
+  const btnStart = document.getElementById("btnStart");
+  const btnRestart = document.getElementById("btnRestart");
+
+  const promptLine = document.getElementById("promptLine");
+  const progressLine = document.getElementById("progressLine");
+  const endScreen = document.getElementById("endScreen");
+  const endTitle = document.getElementById("endTitle");
+  const statsGrid = document.getElementById("statsGrid");
+
+  const stateText = document.getElementById("stateText");
+  const audioText = document.getElementById("audioText");
+
+  // ----- Runtime state -----
+  const rt = {
+    state: "ready", // init->ready immediately; no external deps.
+    L1: DEFAULT_L1,
+    L2: DEFAULT_L2,
+    wordPairs: [],      // {id, L1, L2}
+    bubbles: [],        // {id, word, x,y,vx,vy,r, alive}
+    rockets: [],        // {id, fromX,fromY,toX,toY, x,y, t, speed, active, targetId, correct }
+    explosions: [],     // {x,y, t, dur}
+    speakQueue: [],
+    speakIndex: 0,
+    currentSpokenId: null,
+    audioMode: "unknown", // speech | text-only
+    startTime: null,
+    endTime: null,
+    attemptsTotal: 0,
+    attemptsCorrect: 0,
+    incorrectAttemptsTotal: 0,
+    incorrectWordsSet: new Set(),
+    mouse: { x:0, y:0 },
+    lastTs: 0,
+  };
+
+  // ----- Helpers -----
+  function nowMs(){ return performance.now(); }
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+  function rand(min,max){ return min + Math.random()*(max-min); }
+  function fmtMs(ms){
+    const s = Math.max(0, ms/1000);
+    const m = Math.floor(s/60);
+    const r = s - m*60;
+    const sec = r.toFixed(2).padStart(5,"0");
+    return (m>0) ? `${m}:${sec}` : `${sec}s`;
+  }
+  function uiStr(map){ return map[rt.L2] ?? map.en; }
+
+  function setState(s){
+    rt.state = s;
+    stateText.textContent = s;
+  }
+
+  function buildWordPairs(){
+    // same concept list; L1 = learning string; L2 = native string
+    rt.wordPairs = CONCEPTS.map(c => ({
+      id: c.id,
+      L1: c.t[rt.L1],
+      L2: c.t[rt.L2],
+    }));
+  }
+
+  function updateUIStrings(){
+    lblL1.textContent = uiStr(UI.learningLabel);
+    lblL2.textContent = uiStr(UI.nativeLabel);
+    btnStart.textContent = uiStr(UI.start);
+    btnRestart.textContent = uiStr(UI.restart);
+    endTitle.textContent = uiStr(UI.results);
+
+    // HUD prompt line depending on state
+    if (rt.state !== "running") {
+      promptLine.textContent = uiStr(UI.pressStart);
+    } else {
+      const p = currentPair();
+      if (p) {
+        promptLine.innerHTML = `${uiStr(UI.promptHeard)}: <strong>${escapeHtml(p.L2)}</strong> — ${escapeHtml(uiStr(UI.clickMatch))}`;
+      } else {
+        promptLine.textContent = uiStr(UI.clickMatch);
+      }
+    }
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  }
+
+  function populateSelect(selectEl, value){
+    selectEl.innerHTML = "";
+    for (const code of LANGS){
+      const opt = document.createElement("option");
+      opt.value = code;
+      opt.textContent = code.toUpperCase();
+      selectEl.appendChild(opt);
+    }
+    selectEl.value = value;
+  }
+
+  function canvasResize(){
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const w = Math.floor(window.innerWidth);
+    const h = Math.floor(window.innerHeight);
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  function cannonPos(){
+    const w = window.innerWidth, h = window.innerHeight;
+    const x = w * 0.5;
+    const y = h - 34;
+    return { x, y };
+  }
+
+  function muzzlePos(){
+    const c = cannonPos();
+    // point slightly above the base
+    return { x: c.x, y: c.y - 14 };
+  }
+
+  function currentPair(){
+    if (rt.speakIndex < rt.speakQueue.length) return rt.speakQueue[rt.speakIndex];
+    return null;
+  }
+
+  function aliveCount(){
+    let n=0;
+    for (const b of rt.bubbles) if (b.alive) n++;
+    return n;
+  }
+
+  function updateProgress(){
+    const total = rt.bubbles.length || rt.wordPairs.length || 0;
+    const remaining = aliveCount();
+    const done = total - remaining;
+    progressLine.textContent = `${done} / ${total}`;
+  }
+
+  // ----- Audio (offline, dependency-free): Web Speech API if available -----
+  function canSpeak(){
+    return !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
+  }
+
+  function speakText(text, lang){
+    if (!canSpeak()) return false;
+    try{
+      // cancel any backlog so it feels responsive
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang; // BCP-47-ish; "en","fr" etc often work
+      u.rate = 1.0;
+      u.pitch = 1.0;
+      u.volume = 1.0;
+      window.speechSynthesis.speak(u);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function ensureAudioMode(){
+    rt.audioMode = canSpeak() ? "speech" : "text-only";
+    audioText.textContent = (rt.audioMode === "speech") ? uiStr(UI.audioOk) : uiStr(UI.audioOff);
+  }
+
+  // ----- Game setup -----
+  function resetRunState(){
+    rt.rockets = [];
+    rt.explosions = [];
+    rt.speakQueue = rt.wordPairs.slice(); // preserved order
+    rt.speakIndex = 0;
+    rt.currentSpokenId = null;
+
+    rt.startTime = null;
+    rt.endTime = null;
+
+    rt.attemptsTotal = 0;
+    rt.attemptsCorrect = 0;
+    rt.incorrectAttemptsTotal = 0;
+    rt.incorrectWordsSet = new Set();
+
+    // spawn bubbles distributed
+    const w = window.innerWidth, h = window.innerHeight;
+    const topSafe = 86;               // keep clear of overlay
+    const bottomSafe = h - 120;       // keep clear of cannon/hud
+    const leftSafe = 12, rightSafe = w - 12;
+
+    rt.bubbles = rt.wordPairs.map((p, i) => {
+      const r = cfg.bubbleRadius;
+      const x = rand(leftSafe + r, rightSafe - r);
+      const y = rand(topSafe + r, bottomSafe - r);
+      const ang = rand(0, Math.PI*2);
+      const sp = cfg.bubbleSpeed * rand(0.65, 1.25);
+      return {
+        id: p.id,
+        word: p.L1,
+        x, y,
+        vx: Math.cos(ang)*sp,
+        vy: Math.sin(ang)*sp,
+        r,
+        alive: true,
+      };
+    });
+
+    updateProgress();
+  }
+
+  function startGame(){
+    if (rt.L1 === rt.L2) {
+      // enforce different languages (spec constraint)
+      // choose a fallback for L2
+      rt.L2 = (rt.L1 === "en") ? "fr" : "en";
+      selL2.value = rt.L2;
+    }
+
+    buildWordPairs();
+    resetRunState();
+    setState("running");
+    rt.startTime = nowMs();
+    endScreen.style.display = "none";
+    btnStart.disabled = true;
+    selL1.disabled = true;
+    selL2.disabled = true;
+
+    speakCurrent();
+    updateUIStrings();
+  }
+
+  function endGame(){
+    if (rt.state !== "running") return;
+    rt.endTime = nowMs();
+    setState("ended");
+
+    const dur = Math.max(0, rt.endTime - rt.startTime);
+    const correctPct = rt.attemptsTotal === 0 ? 0 : (100 * rt.attemptsCorrect / rt.attemptsTotal);
+    const incorrectWordsUnique = rt.incorrectWordsSet.size;
+    const incorrectAttemptsTotal = rt.incorrectAttemptsTotal;
+
+    // Render 2D stats block
+    statsGrid.innerHTML = "";
+    const items = [
+      { k: uiStr(UI.duration), v: fmtMs(dur) },
+      { k: uiStr(UI.correctPct), v: `${correctPct.toFixed(1)}%` },
+      { k: uiStr(UI.incorrectWords), v: String(incorrectWordsUnique) },
+      { k: uiStr(UI.incorrectAtt), v: String(incorrectAttemptsTotal) },
+    ];
+    for (const it of items){
+      const d = document.createElement("div");
+      d.className = "stat";
+      d.innerHTML = `<div class="k">${escapeHtml(it.k)}</div><div class="v">${escapeHtml(it.v)}</div>`;
+      statsGrid.appendChild(d);
+    }
+
+    endScreen.style.display = "grid";
+    btnStart.disabled = false;
+    selL1.disabled = false;
+    selL2.disabled = false;
+
+    // stop any speech
+    if (canSpeak()) window.speechSynthesis.cancel();
+    updateUIStrings();
+  }
+
+  function speakCurrent(){
+    const p = currentPair();
+    if (!p) {
+      rt.currentSpokenId = null;
+      return;
+    }
+    rt.currentSpokenId = p.id;
+
+    const ok = speakText(p.L2, rt.L2);
+    if (!ok) {
+      // text-only mode; HUD still shows the prompt
+    }
+    updateUIStrings();
+  }
+
+  // ----- Interaction: click bubble => fire rocket from cannon -----
+  function bubbleAt(x,y){
+    // topmost = nearest center
+    let best = null;
+    let bestD = Infinity;
+    for (const b of rt.bubbles){
+      if (!b.alive) continue;
+      const dx = x - b.x, dy = y - b.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 <= b.r*b.r && d2 < bestD){
+        best = b; bestD = d2;
+      }
+    }
+    return best;
+  }
+
+  function spawnRocket(targetBubble){
+    if (rt.rockets.filter(r => r.active).length >= cfg.maxRockets) return;
+
+    const muzzle = muzzlePos();
+    const rocket = {
+      id: "r" + Math.random().toString(16).slice(2),
+      fromX: muzzle.x, fromY: muzzle.y,
+      toX: targetBubble.x, toY: targetBubble.y,
+      x: muzzle.x, y: muzzle.y,
+      t: 0,
+      speed: cfg.rocketSpeed,
+      active: true,
+      targetId: targetBubble.id,
+      correct: (targetBubble.id === rt.currentSpokenId),
+    };
+    rt.rockets.push(rocket);
+  }
+
+  function popBubble(b){
+    b.alive = false;
+    rt.explosions.push({ x:b.x, y:b.y, t:0, dur:0.35 });
+  }
+
+  // ----- Simulation tick -----
+  function tick(ts){
+    const dt = rt.lastTs ? Math.min(0.033, (ts - rt.lastTs)/1000) : 0;
+    rt.lastTs = ts;
+
+    // update bubble physics in running state
+    if (rt.state === "running"){
+      const w = window.innerWidth, h = window.innerHeight;
+      const topSafe = 74;
+      const bottomSafe = h - 100;
+      const leftSafe = 6, rightSafe = w - 6;
+
+      for (const b of rt.bubbles){
+        if (!b.alive) continue;
+
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+
+        // bounce in safe bounds
+        const r = b.r;
+        if (b.x < leftSafe + r){ b.x = leftSafe + r; b.vx *= -1; }
+        if (b.x > rightSafe - r){ b.x = rightSafe - r; b.vx *= -1; }
+        if (b.y < topSafe + r){ b.y = topSafe + r; b.vy *= -1; }
+        if (b.y > bottomSafe - r){ b.y = bottomSafe - r; b.vy *= -1; }
+      }
+
+      // update rockets
+      for (const r of rt.rockets){
+        if (!r.active) continue;
+        // track moving target bubble a bit for nicer feel
+        const tb = rt.bubbles.find(b => b.id === r.targetId);
+        if (tb && tb.alive){
+          r.toX = tb.x; r.toY = tb.y;
+        }
+        const dx = r.toX - r.fromX, dy = r.toY - r.fromY;
+        const dist = Math.hypot(dx, dy) || 1;
+        const dtToAdvance = (r.speed * dt) / dist;
+        r.t = clamp(r.t + dtToAdvance, 0, 1);
+        r.x = r.fromX + dx * r.t;
+        r.y = r.fromY + dy * r.t;
+
+        if (r.t >= 1){
+          r.active = false;
+
+          // RocketHit resolution
+          const bubble = rt.bubbles.find(b => b.id === r.targetId);
+          if (bubble && bubble.alive){
+            if (bubble.id === rt.currentSpokenId){
+              rt.attemptsCorrect += 1;
+              popBubble(bubble);
+              rt.speakIndex += 1;
+              updateProgress();
+
+              if (aliveCount() === 0){
+                endGame();
+              } else {
+                speakCurrent();
+              }
+            } else {
+              rt.incorrectAttemptsTotal += 1;
+              if (rt.currentSpokenId) rt.incorrectWordsSet.add(rt.currentSpokenId);
+
+              // small "miss" explosion at impact point (but bubble remains)
+              rt.explosions.push({ x:r.x, y:r.y, t:0, dur:0.22 });
+            }
+          } else {
+            // bubble already popped; harmless
+            rt.explosions.push({ x:r.x, y:r.y, t:0, dur:0.18 });
+          }
+        }
+      }
+
+      // prune old rockets
+      rt.rockets = rt.rockets.filter(r => r.active || r.t < 1);
+
+      // explosions
+      for (const ex of rt.explosions){
+        ex.t += dt;
+      }
+      rt.explosions = rt.explosions.filter(ex => ex.t < ex.dur);
+
+      // HUD update is cheap
+      updateProgress();
+    }
+
+    render();
+    requestAnimationFrame(tick);
+  }
+
+  // ----- Rendering -----
+  function render(){
+    const w = window.innerWidth, h = window.innerHeight;
+
+    // background
+    ctx.fillStyle = "#070b16";
+    ctx.fillRect(0,0,w,h);
+
+    // subtle grid
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.strokeStyle = "rgba(122,162,255,.10)";
+    ctx.lineWidth = 1;
+    const step = 48;
+    for (let x=0; x<=w; x+=step){
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+    }
+    for (let y=0; y<=h; y+=step){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+    }
+    ctx.restore();
+
+    // bubbles
+    for (const b of rt.bubbles){
+      if (!b.alive) continue;
+      drawBubble(b);
+    }
+
+    // rockets
+    for (const r of rt.rockets){
+      if (!r.active) continue;
+      drawRocket(r);
+    }
+
+    // cannon + crosshair
+    drawCannon();
+
+    if (cfg.crosshair){
+      drawCrosshair(rt.mouse.x, rt.mouse.y);
+    }
+
+    // explosions
+    for (const ex of rt.explosions){
+      drawExplosion(ex);
+    }
+
+    // prompt line for text-only audio mode: show L2 strongly when running
+    if (rt.state === "running" && rt.audioMode !== "speech"){
+      const p = currentPair();
+      if (p){
+        // already in HUD, but also a subtle on-canvas prompt
+        ctx.save();
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = "rgba(0,0,0,.35)";
+        ctx.strokeStyle = "rgba(255,255,255,.10)";
+        ctx.lineWidth = 1;
+        const pad = 10;
+        const text = `${uiStr(UI.promptHeard)}: ${p.L2}`;
+        ctx.font = "600 15px system-ui, sans-serif";
+        const tw = ctx.measureText(text).width;
+        const x = 12, y = h - 150;
+        const bw = tw + pad*2, bh = 34;
+        roundRect(ctx, x, y, bw, bh, 10);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#e8eeff";
+        ctx.fillText(text, x+pad, y+22);
+        ctx.restore();
+      }
+    }
+  }
+
+  function drawBubble(b){
+    ctx.save();
+    // glow
+    ctx.shadowColor = "rgba(122,162,255,.35)";
+    ctx.shadowBlur = 14;
+
+    // bubble circle
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--bubble").trim();
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--bubbleStroke").trim();
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+
+    // highlight
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.65;
+    ctx.fillStyle = "rgba(255,255,255,.10)";
+    ctx.beginPath();
+    ctx.arc(b.x - b.r*0.28, b.y - b.r*0.28, b.r*0.32, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // word
+    ctx.fillStyle = "#e8eeff";
+    ctx.font = "700 14px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    // fit text roughly by scaling if long
+    const maxW = b.r * 1.6;
+    const measure = ctx.measureText(b.word).width;
+    if (measure > maxW){
+      const scale = maxW / measure;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.scale(scale, scale);
+      ctx.fillText(b.word, 0, 0);
+      ctx.restore();
+    } else {
+      ctx.fillText(b.word, b.x, b.y);
+    }
+
+    ctx.restore();
+  }
+
+  function drawCannon(){
+    const c = cannonPos();
+    const muzzle = muzzlePos();
+    const mx = rt.mouse.x, my = rt.mouse.y;
+    const ang = Math.atan2(my - muzzle.y, mx - muzzle.x);
+
+    // base
+    ctx.save();
+    ctx.fillStyle = "rgba(255,255,255,.06)";
+    ctx.strokeStyle = "rgba(255,255,255,.12)";
+    ctx.lineWidth = 1;
+
+    roundRect(ctx, c.x - 60, c.y - 18, 120, 40, 14);
+    ctx.fill();
+    ctx.stroke();
+
+    // barrel
+    ctx.translate(muzzle.x, muzzle.y);
+    ctx.rotate(ang);
+    ctx.fillStyle = "rgba(122,162,255,.22)";
+    ctx.strokeStyle = "rgba(122,162,255,.55)";
+    ctx.lineWidth = 2;
+
+    roundRect(ctx, 0, -7, 54, 14, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    // muzzle tip
+    ctx.fillStyle = "rgba(255,255,255,.12)";
+    ctx.beginPath();
+    ctx.arc(54, 0, 6, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawRocket(r){
+    // trail
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    ctx.strokeStyle = r.correct ? "rgba(70,227,154,.55)" : "rgba(255,95,109,.45)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(r.fromX, r.fromY);
+    ctx.lineTo(r.x, r.y);
+    ctx.stroke();
+    ctx.restore();
+
+    // rocket body
+    const ang = Math.atan2(r.toY - r.fromY, r.toX - r.fromX);
+    ctx.save();
+    ctx.translate(r.x, r.y);
+    ctx.rotate(ang);
+
+    ctx.fillStyle = "rgba(255,255,255,.85)";
+    ctx.strokeStyle = "rgba(0,0,0,.35)";
+    ctx.lineWidth = 1;
+
+    roundRect(ctx, -10, -3, 18, 6, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    // flame
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = r.correct ? "rgba(70,227,154,.85)" : "rgba(255,209,102,.85)";
+    ctx.beginPath();
+    ctx.moveTo(-10, 0);
+    ctx.lineTo(-18, -4);
+    ctx.lineTo(-18, 4);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawExplosion(ex){
+    const p = ex.t / ex.dur;
+    const radius = 10 + 36*p;
+    const a = 1 - p;
+
+    ctx.save();
+    ctx.globalAlpha = 0.85 * a;
+
+    // outer ring
+    ctx.strokeStyle = "rgba(255,209,102,.85)";
+    ctx.lineWidth = 3 * a;
+    ctx.beginPath();
+    ctx.arc(ex.x, ex.y, radius, 0, Math.PI*2);
+    ctx.stroke();
+
+    // inner glow
+    const g = ctx.createRadialGradient(ex.x, ex.y, 0, ex.x, ex.y, radius);
+    g.addColorStop(0, `rgba(255,95,109,${0.30*a})`);
+    g.addColorStop(0.6, `rgba(255,209,102,${0.20*a})`);
+    g.addColorStop(1, `rgba(122,162,255,0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(ex.x, ex.y, radius, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawCrosshair(x,y){
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    ctx.strokeStyle = "rgba(232,238,255,.55)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x-10,y); ctx.lineTo(x-3,y);
+    ctx.moveTo(x+3,y);  ctx.lineTo(x+10,y);
+    ctx.moveTo(x,y-10); ctx.lineTo(x,y-3);
+    ctx.moveTo(x,y+3);  ctx.lineTo(x,y+10);
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath();
+    ctx.arc(x,y,16,0,Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function roundRect(c, x, y, w, h, r){
+    const rr = Math.min(r, w/2, h/2);
+    c.beginPath();
+    c.moveTo(x+rr, y);
+    c.arcTo(x+w, y, x+w, y+h, rr);
+    c.arcTo(x+w, y+h, x, y+h, rr);
+    c.arcTo(x, y+h, x, y, rr);
+    c.arcTo(x, y, x+w, y, rr);
+    c.closePath();
+  }
+
+  // ----- Event wiring -----
+  function onLanguageChanged(){
+    rt.L1 = selL1.value;
+    rt.L2 = selL2.value;
+
+    // enforce different languages at selection time by nudging L2 if equal
+    if (rt.L1 === rt.L2){
+      // pick next language for L2
+      const idx = LANGS.indexOf(rt.L2);
+      const next = LANGS[(idx + 1) % LANGS.length];
+      rt.L2 = next;
+      selL2.value = rt.L2;
+    }
+
+    ensureAudioMode();
+    buildWordPairs();
+    updateUIStrings();
+    updateProgress();
+  }
+
+  function onStartPressed(){
+    if (rt.state === "running") return;
+    startGame();
+  }
+
+  function onRestart(){
+    // Keep selected languages, restart run
+    if (rt.state === "running" && canSpeak()) window.speechSynthesis.cancel();
+    startGame();
+  }
+
+  function onPointerMove(e){
+    const rect = canvas.getBoundingClientRect();
+    rt.mouse.x = e.clientX - rect.left;
+    rt.mouse.y = e.clientY - rect.top;
+  }
+
+  function onPointerDown(e){
+    if (rt.state !== "running") return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const b = bubbleAt(x,y);
+    if (!b) return;
+
+    rt.attemptsTotal += 1;
+    spawnRocket(b);
+  }
+
+  // ----- Init -----
+  function init(){
+    populateSelect(selL1, rt.L1);
+    populateSelect(selL2, rt.L2);
+
+    selL1.addEventListener("change", onLanguageChanged);
+    selL2.addEventListener("change", onLanguageChanged);
+    btnStart.addEventListener("click", onStartPressed);
+    btnRestart.addEventListener("click", onRestart);
+
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerdown", onPointerDown);
+
+    window.addEventListener("resize", () => {
+      canvasResize();
+      // keep bubbles inside after resize
+      // (simple clamp)
+      const w = window.innerWidth, h = window.innerHeight;
+      const topSafe = 74, bottomSafe = h - 100, leftSafe = 6, rightSafe = w - 6;
+      for (const b of rt.bubbles){
+        b.x = clamp(b.x, leftSafe + b.r, rightSafe - b.r);
+        b.y = clamp(b.y, topSafe + b.r, bottomSafe - b.r);
+      }
+    });
+
+    canvasResize();
+    ensureAudioMode();
+    buildWordPairs();
+    resetRunState();
+    setState("ready");
+    updateUIStrings();
+    updateProgress();
+
+    requestAnimationFrame(tick);
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+</body>
+</html>

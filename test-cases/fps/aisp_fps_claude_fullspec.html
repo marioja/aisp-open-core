@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FPS Vocabulary Bubble Shooter</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            overflow: hidden;
+            color: white;
+        }
+        #gameCanvas {
+            display: block;
+            background: linear-gradient(180deg, #0f3460 0%, #1a1a2e 100%);
+            cursor: crosshair;
+        }
+        #uiOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            pointer-events: none;
+        }
+        #uiOverlay > * {
+            pointer-events: auto;
+        }
+        .controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+        .dropdown-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .dropdown-group label {
+            font-size: 12px;
+            color: #aaa;
+            font-weight: bold;
+        }
+        select {
+            padding: 8px 12px;
+            border-radius: 5px;
+            border: 2px solid #e94560;
+            background: #16213e;
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        select:hover {
+            border-color: #ff6b9d;
+            background: #1f2c47;
+        }
+        #btnStart {
+            padding: 12px 30px;
+            font-size: 16px;
+            font-weight: bold;
+            background: linear-gradient(135deg, #e94560 0%, #ff6b9d 100%);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(233, 69, 96, 0.4);
+        }
+        #btnStart:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(233, 69, 96, 0.6);
+        }
+        #btnStart:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #hud {
+            position: absolute;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px 40px;
+            border-radius: 15px;
+            min-width: 300px;
+        }
+        #currentPrompt {
+            font-size: 32px;
+            font-weight: bold;
+            color: #e94560;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(233, 69, 96, 0.5);
+        }
+        #progress {
+            font-size: 16px;
+            color: #aaa;
+        }
+        #endScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            border: 3px solid #e94560;
+            min-width: 400px;
+            display: none;
+            box-shadow: 0 10px 50px rgba(0, 0, 0, 0.8);
+        }
+        #endScreen h2 {
+            font-size: 36px;
+            margin-bottom: 30px;
+            color: #e94560;
+            text-align: center;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 18px;
+        }
+        .stat-label {
+            color: #aaa;
+        }
+        .stat-value {
+            color: #e94560;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="uiOverlay">
+        <div class="controls">
+            <div class="dropdown-group">
+                <label id="lblLearning">Learning language</label>
+                <select id="langLearning">
+                    <option value="en">English</option>
+                    <option value="fr" selected>Français</option>
+                    <option value="es">Español</option>
+                    <option value="it">Italiano</option>
+                </select>
+            </div>
+            
+            <div class="dropdown-group">
+                <label id="lblNative">Native language</label>
+                <select id="langNative">
+                    <option value="en" selected>English</option>
+                    <option value="fr">Français</option>
+                    <option value="es">Español</option>
+                    <option value="it">Italiano</option>
+                </select>
+            </div>
+            
+            <button id="btnStart">Start</button>
+        </div>
+        
+        <div id="hud" style="display: none;">
+            <div id="currentPrompt">-</div>
+            <div id="progress">0 / 0</div>
+        </div>
+    </div>
+    
+    <div id="endScreen">
+        <h2>Game Complete!</h2>
+        <div class="stat-row">
+            <span class="stat-label">Duration:</span>
+            <span class="stat-value" id="statDuration">-</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Accuracy:</span>
+            <span class="stat-value" id="statAccuracy">-</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Unique Incorrect Words:</span>
+            <span class="stat-value" id="statIncorrectUnique">-</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Total Incorrect Attempts:</span>
+            <span class="stat-value" id="statIncorrectTotal">-</span>
+        </div>
+    </div>
+
+    <script>
+        // Configuration (AISP Σ::TEMPLATE.minimal)
+        const CONFIG = {
+            offline_single_page_html: true,
+            dependency_free: true,
+            languages_supported: ["en", "fr", "es", "it"],
+            role_L1: "learning",
+            role_L2: "native",
+            default_L1: "fr",
+            default_L2: "en",
+            wordset_id: "core-demo-10",
+            word_pairs: [
+                {id:"w1", L1:"bonjour", L2:"hello"},
+                {id:"w2", L1:"merci", L2:"thank you"},
+                {id:"w3", L1:"pomme", L2:"apple"},
+                {id:"w4", L1:"eau", L2:"water"},
+                {id:"w5", L1:"chat", L2:"cat"},
+                {id:"w6", L1:"chien", L2:"dog"},
+                {id:"w7", L1:"maison", L2:"house"},
+                {id:"w8", L1:"livre", L2:"book"},
+                {id:"w9", L1:"soleil", L2:"sun"},
+                {id:"w10", L1:"lune", L2:"moon"}
+            ],
+            bubble_count: 10,
+            bubble_radius_px: 46,
+            bubble_speed_px_s: 55,
+            cannon_y_anchor: "bottom",
+            rocket_speed_px_s: 900,
+            speak_rate: 1.0,
+            speak_pitch: 1.0,
+            speak_volume: 1.0
+        };
+
+        // I18N Translations
+        const TRANSLATIONS = {
+            learning_label: {
+                en: "Learning language",
+                fr: "Langue d'apprentissage",
+                es: "Idioma de aprendizaje",
+                it: "Lingua di apprendimento"
+            },
+            native_label: {
+                en: "Native language",
+                fr: "Langue maternelle",
+                es: "Idioma nativo",
+                it: "Lingua madre"
+            },
+            start_button: {
+                en: "Start",
+                fr: "Démarrer",
+                es: "Iniciar",
+                it: "Avvia"
+            }
+        };
+
+        // Runtime State
+        const runtime = {
+            state: "init",
+            L1: CONFIG.default_L1,
+            L2: CONFIG.default_L2,
+            bubbles: [],
+            rockets: [],
+            speak_queue: [],
+            speak_index: 0,
+            current_spoken_word_id: null,
+            start_time_ms: null,
+            end_time_ms: null,
+            attempts_total: 0,
+            attempts_correct: 0,
+            incorrect_attempts_total: 0,
+            incorrect_words_set: new Set(),
+            ended_stats: null
+        };
+
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // UI Elements
+        const langLearning = document.getElementById('langLearning');
+        const langNative = document.getElementById('langNative');
+        const btnStart = document.getElementById('btnStart');
+        const hud = document.getElementById('hud');
+        const currentPrompt = document.getElementById('currentPrompt');
+        const progress = document.getElementById('progress');
+        const endScreen = document.getElementById('endScreen');
+
+        // Update UI language
+        function updateUILanguage() {
+            document.getElementById('lblLearning').textContent = TRANSLATIONS.learning_label[runtime.L2];
+            document.getElementById('lblNative').textContent = TRANSLATIONS.native_label[runtime.L2];
+            btnStart.textContent = TRANSLATIONS.start_button[runtime.L2];
+        }
+
+        // Language change handlers
+        langLearning.addEventListener('change', (e) => {
+            runtime.L1 = e.target.value;
+            if (runtime.L1 === runtime.L2) {
+                // Find different language
+                const others = CONFIG.languages_supported.filter(l => l !== runtime.L1);
+                runtime.L2 = others[0];
+                langNative.value = runtime.L2;
+            }
+            updateUILanguage();
+        });
+
+        langNative.addEventListener('change', (e) => {
+            runtime.L2 = e.target.value;
+            if (runtime.L1 === runtime.L2) {
+                // Find different language
+                const others = CONFIG.languages_supported.filter(l => l !== runtime.L2);
+                runtime.L1 = others[0];
+                langLearning.value = runtime.L1;
+            }
+            updateUILanguage();
+        });
+
+        // Speech synthesis
+        function speak(word, lang) {
+            if (!window.speechSynthesis) {
+                currentPrompt.textContent = word;
+                return;
+            }
+
+            const utterance = new SpeechSynthesisUtterance(word);
+            utterance.lang = lang === 'en' ? 'en-US' : 
+                           lang === 'fr' ? 'fr-FR' : 
+                           lang === 'es' ? 'es-ES' : 'it-IT';
+            utterance.rate = CONFIG.speak_rate;
+            utterance.pitch = CONFIG.speak_pitch;
+            utterance.volume = CONFIG.speak_volume;
+            
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // Word spoken event
+        function onWordSpoken() {
+            if (runtime.state !== "running") return;
+            
+            if (runtime.speak_index < runtime.speak_queue.length) {
+                const pair = runtime.speak_queue[runtime.speak_index];
+                runtime.current_spoken_word_id = pair.id;
+                currentPrompt.textContent = pair.L2;
+                speak(pair.L2, runtime.L2);
+                
+                const popped = runtime.bubbles.filter(b => !b.alive).length;
+                progress.textContent = `${popped} / ${CONFIG.bubble_count}`;
+            } else {
+                runtime.current_spoken_word_id = null;
+                currentPrompt.textContent = "Keep popping!";
+            }
+        }
+
+        // Bubble physics
+        function createBubbles() {
+            const bubbles = [];
+            for (let i = 0; i < CONFIG.word_pairs.length; i++) {
+                const pair = CONFIG.word_pairs[i];
+                const angle = Math.random() * Math.PI * 2;
+                const speed = CONFIG.bubble_speed_px_s;
+                
+                bubbles.push({
+                    id: pair.id,
+                    word: pair.L1,
+                    x: Math.random() * (canvas.width - 100) + 50,
+                    y: Math.random() * (canvas.height - 200) + 100,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    radius: CONFIG.bubble_radius_px,
+                    alive: true
+                });
+            }
+            return bubbles;
+        }
+
+        function updateBubbles(dt) {
+            for (const bubble of runtime.bubbles) {
+                if (!bubble.alive) continue;
+                
+                bubble.x += bubble.vx * dt;
+                bubble.y += bubble.vy * dt;
+                
+                // Bounce off walls
+                if (bubble.x - bubble.radius < 0 || bubble.x + bubble.radius > canvas.width) {
+                    bubble.vx *= -1;
+                    bubble.x = Math.max(bubble.radius, Math.min(canvas.width - bubble.radius, bubble.x));
+                }
+                if (bubble.y - bubble.radius < 0 || bubble.y + bubble.radius > canvas.height - 80) {
+                    bubble.vy *= -1;
+                    bubble.y = Math.max(bubble.radius, Math.min(canvas.height - 80 - bubble.radius, bubble.y));
+                }
+            }
+        }
+
+        function drawBubbles() {
+            for (const bubble of runtime.bubbles) {
+                if (!bubble.alive) continue;
+                
+                // Bubble glow
+                const gradient = ctx.createRadialGradient(
+                    bubble.x, bubble.y, bubble.radius * 0.3,
+                    bubble.x, bubble.y, bubble.radius
+                );
+                gradient.addColorStop(0, 'rgba(233, 69, 96, 0.8)');
+                gradient.addColorStop(1, 'rgba(233, 69, 96, 0.3)');
+                
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(bubble.x, bubble.y, bubble.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Border
+                ctx.strokeStyle = '#e94560';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                
+                // Word
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 18px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(bubble.word, bubble.x, bubble.y);
+            }
+        }
+
+        // Rocket mechanics
+        function updateRockets(dt) {
+            for (const rocket of runtime.rockets) {
+                if (!rocket.active) continue;
+                
+                rocket.t += (rocket.speed / 1000) * dt;
+                
+                if (rocket.t >= 1) {
+                    rocket.t = 1;
+                    onRocketHit(rocket);
+                    rocket.active = false;
+                }
+            }
+            
+            runtime.rockets = runtime.rockets.filter(r => r.active);
+        }
+
+        function drawRockets() {
+            for (const rocket of runtime.rockets) {
+                if (!rocket.active) continue;
+                
+                const x = rocket.fromX + (rocket.toX - rocket.fromX) * rocket.t;
+                const y = rocket.fromY + (rocket.toY - rocket.fromY) * rocket.t;
+                
+                // Trail
+                ctx.strokeStyle = 'rgba(255, 107, 157, 0.6)';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(rocket.fromX, rocket.fromY);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+                
+                // Projectile
+                ctx.fillStyle = '#ff6b9d';
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Cannon
+        function drawCannon() {
+            const cannonX = canvas.width / 2;
+            const cannonY = canvas.height - 40;
+            
+            // Base
+            ctx.fillStyle = '#16213e';
+            ctx.strokeStyle = '#e94560';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(cannonX, cannonY, 25, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Barrel
+            ctx.fillStyle = '#e94560';
+            ctx.fillRect(cannonX - 8, cannonY - 40, 16, 40);
+            
+            // Crosshair
+            ctx.strokeStyle = 'rgba(233, 69, 96, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(cannonX - 15, cannonY);
+            ctx.lineTo(cannonX + 15, cannonY);
+            ctx.moveTo(cannonX, cannonY - 15);
+            ctx.lineTo(cannonX, cannonY + 15);
+            ctx.stroke();
+        }
+
+        // Click handler
+        canvas.addEventListener('click', (e) => {
+            if (runtime.state !== "running") return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Find clicked bubble
+            let clickedBubble = null;
+            for (const bubble of runtime.bubbles) {
+                if (!bubble.alive) continue;
+                const dx = x - bubble.x;
+                const dy = y - bubble.y;
+                if (dx * dx + dy * dy <= bubble.radius * bubble.radius) {
+                    clickedBubble = bubble;
+                    break;
+                }
+            }
+            
+            if (!clickedBubble) return;
+            
+            runtime.attempts_total++;
+            
+            const cannonX = canvas.width / 2;
+            const cannonY = canvas.height - 40;
+            
+            runtime.rockets.push({
+                id: 'r' + Date.now(),
+                fromX: cannonX,
+                fromY: cannonY,
+                toX: clickedBubble.x,
+                toY: clickedBubble.y,
+                t: 0,
+                speed: CONFIG.rocket_speed_px_s,
+                active: true,
+                targetBubbleId: clickedBubble.id
+            });
+        });
+
+        // Rocket hit handler
+        function onRocketHit(rocket) {
+            const bubble = runtime.bubbles.find(b => b.id === rocket.targetBubbleId);
+            if (!bubble || !bubble.alive) return;
+            
+            if (bubble.id === runtime.current_spoken_word_id) {
+                runtime.attempts_correct++;
+                onBubblePopped(bubble);
+            } else {
+                runtime.incorrect_attempts_total++;
+                if (runtime.current_spoken_word_id) {
+                    runtime.incorrect_words_set.add(runtime.current_spoken_word_id);
+                }
+            }
+        }
+
+        // Bubble popped handler
+        function onBubblePopped(bubble) {
+            bubble.alive = false;
+            
+            // Simple explosion effect
+            const particles = 20;
+            for (let i = 0; i < particles; i++) {
+                const angle = (Math.PI * 2 * i) / particles;
+                const speed = 100;
+                setTimeout(() => {
+                    ctx.fillStyle = 'rgba(233, 69, 96, 0.6)';
+                    const px = bubble.x + Math.cos(angle) * 30;
+                    const py = bubble.y + Math.sin(angle) * 30;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }, i * 20);
+            }
+            
+            runtime.speak_index++;
+            onWordSpoken();
+            
+            // Check if game ended
+            if (runtime.bubbles.every(b => !b.alive)) {
+                onGameEnded();
+            }
+        }
+
+        // Game ended handler
+        function onGameEnded() {
+            runtime.state = "ended";
+            runtime.end_time_ms = Date.now();
+            
+            const duration = runtime.end_time_ms - runtime.start_time_ms;
+            const correctPct = runtime.attempts_total === 0 ? 0 : 
+                (100 * runtime.attempts_correct / runtime.attempts_total);
+            
+            runtime.ended_stats = {
+                duration_ms: duration,
+                correct_pct: correctPct,
+                incorrect_words_unique: runtime.incorrect_words_set.size,
+                incorrect_attempts_total: runtime.incorrect_attempts_total
+            };
+            
+            hud.style.display = 'none';
+            endScreen.style.display = 'block';
+            
+            const seconds = Math.floor(duration / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            
+            document.getElementById('statDuration').textContent = 
+                `${minutes}m ${secs}s`;
+            document.getElementById('statAccuracy').textContent = 
+                `${correctPct.toFixed(1)}%`;
+            document.getElementById('statIncorrectUnique').textContent = 
+                runtime.ended_stats.incorrect_words_unique;
+            document.getElementById('statIncorrectTotal').textContent = 
+                runtime.ended_stats.incorrect_attempts_total;
+        }
+
+        // Start button handler
+        btnStart.addEventListener('click', () => {
+            if (runtime.state !== "ready") return;
+            
+            runtime.state = "running";
+            runtime.start_time_ms = Date.now();
+            runtime.speak_queue = [...CONFIG.word_pairs];
+            runtime.speak_index = 0;
+            runtime.bubbles = createBubbles();
+            runtime.rockets = [];
+            runtime.attempts_total = 0;
+            runtime.attempts_correct = 0;
+            runtime.incorrect_attempts_total = 0;
+            runtime.incorrect_words_set = new Set();
+            
+            btnStart.style.display = 'none';
+            hud.style.display = 'block';
+            endScreen.style.display = 'none';
+            
+            onWordSpoken();
+        });
+
+        // Game loop
+        let lastTime = Date.now();
+        function gameLoop() {
+            const now = Date.now();
+            const dt = (now - lastTime) / 1000;
+            lastTime = now;
+            
+            // Clear
+            ctx.fillStyle = 'rgba(15, 52, 96, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (runtime.state === "running") {
+                updateBubbles(dt);
+                updateRockets(dt);
+            }
+            
+            drawBubbles();
+            drawRockets();
+            drawCannon();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            runtime.state = "ready";
+            updateUILanguage();
+            gameLoop();
+        });
+    </script>
+</body>
+</html>
